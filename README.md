@@ -258,6 +258,8 @@ Builds get an ad hoc signature, which is enough to run the app on your own Mac, 
 
 `make build` needs [Bun](https://bun.sh) and the Xcode command line tools. Run `bun install` in `engine/` one time first. `make dmg` also needs `create-dmg` and `rsvg-convert` from Homebrew.
 
+The app leaves out the specs for `aws`, `az`, and `gcloud`, which together are about 60 MB. To include some of them, list them in `FIGXIT_SPECS_EXTRA`, separated by commas or spaces, on the command line or in `.env`: `FIGXIT_SPECS_EXTRA=aws make build`. Their generators call the cloud APIs with your current credentials while you type.
+
 For development, source the adapter from the repository in place of the `eval` line:
 
 ```bash

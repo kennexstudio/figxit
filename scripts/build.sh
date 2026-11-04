@@ -23,8 +23,15 @@ engine() {
 }
 
 resources() {
+  local extra=${FIGXIT_SPECS_EXTRA:-} exclude=() name
+  for name in aws az gcloud; do
+    case " ${extra//,/ } " in
+      *" $name "*) ;;
+      *) exclude+=("--exclude=$name" "--exclude=$name.js") ;;
+    esac
+  done
   mkdir -p "$contents/Resources/specs" "$contents/Resources/shell/zsh" "$contents/Resources/shell/bash" "$contents/Resources/shell/fish"
-  rsync -a --delete --exclude=aws --exclude=aws.js --exclude=az --exclude=az.js --exclude=gcloud --exclude=gcloud.js \
+  rsync -a --delete --delete-excluded ${exclude[@]+"${exclude[@]}"} \
     "$specs/" "$contents/Resources/specs/"
   cp shell/zsh/figxit.zsh "$contents/Resources/shell/zsh/figxit.zsh"
   cp shell/bash/figxit.bash "$contents/Resources/shell/bash/figxit.bash"
