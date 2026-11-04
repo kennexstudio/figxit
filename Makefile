@@ -6,7 +6,7 @@ BUMP ?= patch
 export SIGN_ID NOTARY_PROFILE
 
 .DEFAULT_GOAL := help
-.PHONY: help dev test e2e smoke stop clean build dmg
+.PHONY: help dev test e2e smoke stop clean build dmg sync-upstream
 
 help: ## List the commands
 	@awk 'BEGIN {FS = ":.*## "} /^##@/ {printf "\n%s\n", substr($$0, 5)} /^[a-z0-9-]+:.*## / {printf "  make %-14s %s\n", $$1, $$2}' $(filter-out .env,$(MAKEFILE_LIST))
@@ -45,5 +45,15 @@ build: ## Build dist/Figxit.app. Signed with SIGN_ID from .env, or ad hoc
 
 dmg: build ## Build dist/Figxit.dmg with the drag-to-Applications window
 	@scripts/dmg.sh
+
+##@ Fork
+
+sync-upstream: ## Bring upstream main into main and develop, and push both to origin
+	git checkout develop
+	git fetch upstream
+	git fetch . upstream/main:main
+	git push origin main
+	git merge --no-edit main
+	git push origin develop
 
 -include internal/local.mk
