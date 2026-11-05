@@ -5,7 +5,7 @@ import { specsDir } from "./paths";
 import type { Candidate } from "./sources";
 
 export type Spec = Record<string, any>;
-export type Template = "filepaths" | "folders";
+export type Template = "filepaths" | "folders" | "history";
 
 export interface Position {
   command: string;
@@ -292,7 +292,7 @@ export function emit(position: Position, prefix: string): Emitted {
   };
   const addTemplates = (value: unknown) => {
     for (const template of list(value as string | string[])) {
-      if (template === "filepaths" || template === "folders") out.templates.add(template);
+      if (template === "filepaths" || template === "folders" || template === "history") out.templates.add(template);
     }
   };
   const addArg = (arg: Spec) => {

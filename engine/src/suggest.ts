@@ -147,14 +147,18 @@ async function complete(
   const files: Candidate[] = [];
   const slots: { found: Lookup; head: string }[] = [];
   if (emitted && !project.authoritative) {
-    if (emitted.templates.size > 0) {
+    if (emitted.templates.has("filepaths") || emitted.templates.has("folders")) {
       files.push(...fileCandidates(prefix, cwd, !emitted.templates.has("filepaths")));
     }
     if (project.candidates.length === 0) {
       const plain = ![...words, prefix].some((word) => SHELL.test(word) || BARE.test(word));
       const ctx: GenContext = { tokens: [...words, prefix], cwd, prefix, plain };
+      // An argument with a generator triggered by "@" takes user@host: the generators that list
+      // bare hosts, such as the ssh config's, get the typed user@ in front of their names.
+      const user = emitted.generators.some((generator) => generator.trigger === "@") ? prefix.slice(0, prefix.lastIndexOf("@") + 1) : "";
       for (const generator of emitted.generators) {
-        slots.push({ found: lookup(generator, ctx, now), head: queryHead(generator, prefix) });
+        const head = queryHead(generator, prefix) || (generator.trigger === undefined ? user : "");
+        slots.push({ found: lookup(generator, ctx, now), head });
       }
     }
   }
@@ -206,7 +210,7 @@ async function complete(
 
     for (const [token, stat] of stats) {
       if (claimed.has(token) || project.authoritative) continue;
-      if (covered && stat.local === 0) continue;
+      if (covered && stat.local === 0 && !emitted?.templates.has("history")) continue;
       if (token.length > MAX_TOKEN || SHELL.test(token) || BARE.test(token)) continue;
       if (secretLike(token, words[depth - 1])) continue;
       if (token.startsWith("-") !== prefix.startsWith("-")) continue;

@@ -87,7 +87,7 @@ async function run(generator: Spec, ctx: GenContext): Promise<unknown[]> {
     if (typeof generator.custom === "function") {
       const result = await limit(
         Promise.resolve(
-          generator.custom(ctx.tokens, (input: unknown) => execute(input, ctx.cwd, SCRIPT_TIMEOUT, ctx.plain), {
+          generator.custom(triggerTokens(generator, ctx), (input: unknown) => execute(input, ctx.cwd, SCRIPT_TIMEOUT, ctx.plain), {
             currentWorkingDirectory: ctx.cwd,
             currentProcess: "zsh",
             sshPrefix: "",
@@ -101,12 +101,13 @@ async function run(generator: Spec, ctx: GenContext): Promise<unknown[]> {
       );
       return Array.isArray(result) ? result : [];
     }
-    const script = typeof generator.script === "function" ? generator.script(ctx.tokens) : generator.script;
+    const tokens = triggerTokens(generator, ctx);
+    const script = typeof generator.script === "function" ? generator.script(tokens) : generator.script;
     if (!script) return [];
     const timeout = typeof generator.scriptTimeout === "number" ? generator.scriptTimeout : SCRIPT_TIMEOUT;
     const { stdout } = await limit(execute(script, ctx.cwd, timeout, ctx.plain), timeout + 500, { stdout: "", stderr: "", status: 1 });
     if (typeof generator.postProcess === "function") {
-      const result = generator.postProcess(stdout, ctx.tokens);
+      const result = generator.postProcess(stdout, tokens);
       return Array.isArray(result) ? result : [];
     }
     if (typeof generator.splitOn === "string") {
@@ -130,9 +131,25 @@ function idOf(item: object): number {
   return id;
 }
 
+// The part of the word up to the generator's trigger: the generator runs again when it changes. A
+// trigger other than "/" also cuts the generator's last token there, so that one for user@host sees
+// "ubuntu@" and lists "ubuntu@<host>" however much of the host is typed.
+function triggerScope(generator: Spec, prefix: string): string {
+  if (!generator.trigger) return "";
+  const mark = typeof generator.trigger === "string" && generator.trigger ? generator.trigger : "/";
+  const at = prefix.lastIndexOf(mark);
+  return at < 0 ? "" : prefix.slice(0, at + mark.length);
+}
+
+function triggerTokens(generator: Spec, ctx: GenContext): string[] {
+  if (typeof generator.trigger !== "string" || generator.trigger === "/" || !ctx.tokens.length) return ctx.tokens;
+  const scope = triggerScope(generator, ctx.prefix);
+  return scope ? [...ctx.tokens.slice(0, -1), scope] : ctx.tokens;
+}
+
 function keyOf(generator: Spec, ctx: GenContext): string {
   const id = idOf(generator);
-  const scope = generator.trigger ? ctx.prefix.slice(0, ctx.prefix.lastIndexOf("/") + 1) : "";
+  const scope = triggerScope(generator, ctx.prefix);
   return [id, ctx.cwd, ctx.plain, scope, ...ctx.tokens.slice(0, -1)].join("\0");
 }
 

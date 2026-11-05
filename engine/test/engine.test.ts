@@ -298,6 +298,34 @@ describe("commands", () => {
     expect(files?.items.map((i) => [i.label, i.run === true])).toEqual([["peek", true]]);
   });
 
+  test("user@host: history from any folder, and the typed user in front of every host", async () => {
+    const hosts = ["alpha.example.com", "beta.example.com"];
+    registerSpec("rsh", {
+      name: "rsh",
+      args: {
+        name: "user@hostname",
+        generators: [
+          {
+            trigger: "@",
+            custom: async (tokens: string[]) => {
+              const last = tokens[tokens.length - 1]!;
+              return hosts.map((host) => ({ name: (last.endsWith("@") ? last : "") + host }));
+            },
+          },
+          { custom: async () => [{ name: "gamma" }] },
+          { template: "history" },
+        ],
+      },
+    });
+    const history = historyOf([["rsh ubuntu@myserver.com", "/elsewhere"]]);
+    const labels = async (buffer: string) => (await suggest(buffer, buffer.length, "/here", history, NOW))?.items.map((i) => i.label).sort();
+    expect(await labels("rsh ub")).toEqual(["ubuntu@myserver.com"]);
+    expect(await labels("rsh al")).toEqual(["alpha.example.com"]);
+    expect(await labels("rsh ubuntu@")).toEqual(["ubuntu@alpha.example.com", "ubuntu@beta.example.com", "ubuntu@gamma", "ubuntu@myserver.com"]);
+    expect(await labels("rsh root@be")).toEqual(["root@beta.example.com"]);
+    expect(await labels("rsh ubuntu@g")).toEqual(["ubuntu@gamma"]);
+  });
+
   test("a first word that differs from a command only by case is not listed", async () => {
     const cwd = project({});
     registerSpec("lsx", { name: "lsx" });
