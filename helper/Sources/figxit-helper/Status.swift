@@ -724,7 +724,10 @@ final class StatusController: NSObject, NSMenuDelegate {
         accessItem.isHidden = !attention
         dot.isHidden = !attention
         if let button = item.button {
-            button.toolTip = attention ? "Figxit: allow Accessibility for panes and editors" : "Figxit"
+            let tip = attention ? "Figxit: allow Accessibility for panes and editors" : "Figxit"
+            // Reassigning toolTip re-registers AppKit's tooltip tracking, and doing that on a
+            // timer can leave the menu bar tooltip stuck to the cursor, so set it only on change.
+            if button.toolTip != tip { button.toolTip = tip }
             dot.frame = CGRect(x: button.bounds.width - 8, y: button.isFlipped ? button.bounds.height - 9 : 2, width: 7, height: 7)
         }
     }
