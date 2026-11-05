@@ -101,6 +101,30 @@ describe("Makefile and package.json", () => {
     expect(makeTargets(path).map((t) => t.label)).toEqual(["dev", "release", "r2", "stats"]);
   });
 
+  test("expands the variables of an include line and follows its globs", () => {
+    const files: Record<string, string> = { "mk/a.mk": "MORE := c.mk\nalpha:\n", "mk/b.mk": "beta:\n", "c.mk": "gamma:\n", "d.mk": "delta:\n" };
+    const globs: Record<string, string[]> = { "mk/*.mk": ["mk/a.mk", "mk/b.mk"] };
+    const targets = parseMakefile(
+      "FRAGS := mk/a.mk\nFRAGS += mk/b.mk # two\nLATE = $(MORE)\nOPT ?= d.mk\nOPT ?= x.mk\nbuild:\ninclude $(FRAGS)\ninclude ${LATE} $(OPT) $(UNSET)/x.mk\n-include $(wildcard mk/*.mk)\n",
+      (name) => files[name] ?? null,
+      (pattern) => globs[pattern] ?? [],
+    );
+    expect(targets.map((t) => t.label)).toEqual(["build", "alpha", "beta", "gamma", "delta"]);
+  });
+
+  test("follows an include glob in the Makefile folder and sees a new file", () => {
+    const dir = project({ Makefile: "MK := $(wildcard mk/*.mk)\ndev:\ninclude $(MK)\n" });
+    mkdirSync(join(dir, "mk"));
+    writeFileSync(join(dir, "mk/b.mk"), "beta:\n");
+    writeFileSync(join(dir, "mk/a.mk"), "alpha:\n");
+    writeFileSync(join(dir, "mk/notes.txt"), "nope:\n");
+    const path = join(dir, "Makefile");
+    expect(makeTargets(path).map((t) => t.label)).toEqual(["dev", "alpha", "beta"]);
+    writeFileSync(join(dir, "mk/c.mk"), "gamma:\n");
+    utimesSync(join(dir, "mk"), new Date(), new Date(Date.now() + 5000));
+    expect(makeTargets(path).map((t) => t.label)).toEqual(["dev", "alpha", "beta", "gamma"]);
+  });
+
   test("adds the ##@ section to the help text", () => {
     const targets = parseMakefile("##@ Build\nbuild: ## Build the project\ninstall:\n##@ Tests\ntest-e2e: deps ## Run the e2e tests\n");
     expect(targets.map((t) => t.detail)).toEqual(["Build · Build the project", "Build", "Tests · Run the e2e tests"]);

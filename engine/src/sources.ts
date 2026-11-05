@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { ICONS } from "./brands";
 import { CAUTION, cautious, verbIcon } from "./verbs";
@@ -27,6 +27,10 @@ const TARGET = /^([A-Za-z0-9][A-Za-z0-9_.\/-]*)\s*:(?![=:])(.*)$/;
 const SECTION = /^##@\s*(.+)$/;
 const INCLUDE = /^ *(?:-include|sinclude|include)\s+(.*)$/;
 const INCLUDE_DEPTH = 4;
+const ASSIGN = /^(?:(?:export|override)\s+)*([A-Za-z0-9_.-]+)\s*(::?=|:::=|\?=|\+=|=)\s*(.*)$/;
+const REFERENCE = /\$(?:\(([A-Za-z0-9_.-]+)\)|\{([A-Za-z0-9_.-]+)\})/g;
+const WILDCARD = /\$\(wildcard\s+([^()$]*)\)/g;
+const EXPAND_DEPTH = 8;
 const MAX_FILE = 512 * 1024;
 const MAX_DETAIL = 64;
 const MAKE_ELSEWHERE = /^(-C|-f|--directory|--file|--makefile)/;
@@ -59,18 +63,48 @@ function describe(section: string, help: string): string {
   return text.length > MAX_DETAIL ? text.slice(0, MAX_DETAIL - 1) + "…" : text;
 }
 
-export function parseMakefile(text: string, read: (name: string) => string | null = () => null): Candidate[] {
+// Expands the references to the variables the makefiles set, and $(wildcard ...), so that an
+// `include $(MK_FILES)` or `include mk/*.mk` is followed. A reference to anything else, such as an
+// environment variable or another function, stays unexpanded and its word is skipped.
+function expand(text: string, vars: Map<string, string>, depth = 0): string {
+  if (depth >= EXPAND_DEPTH || !text.includes("$")) return text;
+  const next = text
+    .replace(REFERENCE, (whole, paren, brace) => vars.get(paren ?? brace) ?? whole)
+    .replace(WILDCARD, (_, words) => words);
+  return next === text ? text : expand(next, vars, depth + 1);
+}
+
+function assign(line: string, vars: Map<string, string>) {
+  if (line.startsWith("\t")) return;
+  const match = ASSIGN.exec(line);
+  if (!match) return;
+  const [, name, op, raw] = match;
+  const value = raw!.replace(/(^|[^\\])#.*$/, "$1").trim();
+  if (op === "?=" && vars.has(name!)) return;
+  const expanded = op === "=" || op === "?=" ? value : expand(value, vars);
+  vars.set(name!, op === "+=" && vars.has(name!) ? `${vars.get(name!)} ${expanded}`.trim() : expanded);
+}
+
+export function parseMakefile(
+  text: string,
+  read: (name: string) => string | null = () => null,
+  glob: (pattern: string) => string[] = () => [],
+): Candidate[] {
   const seen = new Map<string, Candidate>();
+  const vars = new Map<string, string>();
   const walk = (body: string, depth: number) => {
     let section = "";
     for (const line of body.split("\n")) {
       const include = INCLUDE.exec(line);
       if (include) {
         if (depth >= INCLUDE_DEPTH) continue;
-        for (const name of include[1]!.replace(/#.*$/, "").trim().split(/\s+/)) {
-          if (!name || /[$*?[]/.test(name)) continue;
-          const included = read(name);
-          if (included !== null) walk(included, depth + 1);
+        const words = expand(include[1]!.replace(/#.*$/, ""), vars).trim().split(/\s+/);
+        for (const word of words) {
+          if (!word || word.includes("$")) continue;
+          for (const name of /[*?[]/.test(word) ? glob(word) : [word]) {
+            const included = read(name);
+            if (included !== null) walk(included, depth + 1);
+          }
         }
         continue;
       }
@@ -80,7 +114,11 @@ export function parseMakefile(text: string, read: (name: string) => string | nul
         continue;
       }
       const match = TARGET.exec(line);
-      if (!match || match[1]!.includes("%")) continue;
+      if (!match) {
+        assign(line, vars);
+        continue;
+      }
+      if (match[1]!.includes("%")) continue;
       const noted = /##\s*(.+)$/.exec(match[2]!)?.[1]!.trim() ?? "";
       const help = noted.replace(CAUTION_TAG, "");
       const flagged = help !== noted || cautious(match[1]!);
@@ -97,6 +135,26 @@ export function parseMakefile(text: string, read: (name: string) => string | nul
   };
   walk(text, 0);
   return [...seen.values()];
+}
+
+// A glob in the file name only, as `include mk/*.mk` uses; a glob in a folder name matches nothing.
+function globIn(dir: string, pattern: string, watch: (path: string) => void): string[] {
+  const folder = dirname(pattern);
+  if (/[*?[]/.test(folder)) return [];
+  const base = isAbsolute(folder) ? folder : join(dir, folder);
+  watch(base);
+  const source = pattern.slice(folder === "." && !pattern.startsWith("./") ? 0 : folder.length + 1);
+  const regex = new RegExp(
+    "^" + source.replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]") + "$",
+  );
+  try {
+    return readdirSync(base)
+      .filter((name) => !name.startsWith(".") && regex.test(name))
+      .sort()
+      .map((name) => (folder === "." && !pattern.startsWith("./") ? name : join(folder, name)));
+  } catch {
+    return [];
+  }
 }
 
 function stamp(path: string): number {
@@ -125,7 +183,17 @@ export function makeTargets(path: string): Candidate[] {
     }
   };
   const text = load(path);
-  const value = text === null ? [] : parseMakefile(text, (name) => load(isAbsolute(name) ? name : join(dir, name)));
+  const watch = (folder: string) => {
+    if (!files.has(folder)) files.set(folder, stamp(folder));
+  };
+  const value =
+    text === null
+      ? []
+      : parseMakefile(
+          text,
+          (name) => load(isAbsolute(name) ? name : join(dir, name)),
+          (pattern) => globIn(dir, pattern, watch),
+        );
   makeCache.set(path, { files, value });
   return value;
 }
